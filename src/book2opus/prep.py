@@ -570,6 +570,82 @@ def postprocess_llm_chunk(raw: str) -> str:
     return text.strip()
 
 
+_VALID_SHORT_WORDS = {
+    "a", "i",
+    "am", "an", "as", "at", "be", "by", "do", "go", "he", "hi", "if", "in", "is", "it",
+    "me", "my", "no", "of", "oh", "ok", "on", "or", "ox", "so", "to", "up", "us", "we",
+    "ye", "ah", "ha", "ho", "lo", "um", "uh",
+    # Common foreign particles, Latin, Roman numerals, units, and standard abbreviations
+    "la", "le", "de", "du", "di", "da", "el", "en", "un", "et", "ex", "ad", "id", "al", "y",
+    "re", "vs", "dr", "mr", "ms", "st", "jr", "sr", "pp", "ch", "bc", "ce",
+    "kg", "mm", "cm", "ml", "km", "mg", "lb", "oz", "ft", "yr", "hr",
+    "ii", "iv", "vi", "ix", "xi", "xv", "xx",
+}
+_OCR_SPLIT_TAIL_RE = re.compile(r"(?<![A-Za-z'\u2019\-])([A-Za-z]{2,})\s+([a-z]{1,2})(?![A-Za-z\-\.'\u2019])")
+_OCR_SPLIT_LEAD_RE = re.compile(r"(?<![A-Za-z'\u2019\.\-])([A-Za-z])\s+([a-z]{1,2})(?![A-Za-z\-\.'\u2019])")
+
+
+def find_ocr_word_splits(text: str) -> list[str]:
+    """Detect likely single-space mid-word OCR splits like 'Sometim es', 'o f', or 'L a'."""
+    matches: list[tuple[int, int, str]] = []
+    occupied: list[tuple[int, int]] = []
+
+    for m in _OCR_SPLIT_LEAD_RE.finditer(text):
+        w1, w2 = m.group(1), m.group(2)
+        hit = False
+        if w1.islower():
+            if w1 not in ("a", "i") or (len(w2) == 1 and w2 not in ("a", "i")):
+                hit = True
+        else:
+            if len(w2) == 1 and not (w1 in ("A", "I") and w2 in ("a", "i")):
+                hit = True
+        if hit:
+            matches.append((m.start(), m.end(), m.group(0)))
+            occupied.append((m.start(), m.end()))
+
+    for m in _OCR_SPLIT_TAIL_RE.finditer(text):
+        w2 = m.group(2)
+        if w2 not in _VALID_SHORT_WORDS:
+            s, e = m.start(), m.end()
+            if any(not (e <= os_ or s >= oe_) for os_, oe_ in occupied):
+                continue
+            matches.append((s, e, m.group(0)))
+
+    matches.sort(key=lambda item: item[0])
+    hits: list[str] = []
+    seen: set[str] = set()
+    for _, _, pair in matches:
+        if pair not in seen:
+            seen.add(pair)
+            hits.append(pair)
+    return hits
+
+
+def strip_duplicate_chapter_heading(ch_title: str, ch_body: str) -> str:
+    """Remove a leading chapter heading line/paragraph if it duplicates <<<CHAPTER: ...>>>."""
+    body = ch_body.strip()
+    if not body or not ch_title.strip():
+        return body
+
+    variants = {_norm_alpha(ch_title)}
+    m = re.match(r"^(?:chapter|part|section)\s+[0-9ivxlcdm]+[\s:.\-\u2013\u2014]+(.+)$", ch_title.strip(), re.I)
+    if m and _norm_alpha(m.group(1)):
+        variants.add(_norm_alpha(m.group(1)))
+    variants.discard("")
+    if not variants:
+        return body
+
+    parts = re.split(r"\n\s*\n", body, maxsplit=1)
+    if _norm_alpha(parts[0]) in variants:
+        return parts[1].strip() if len(parts) > 1 else ""
+
+    lines = body.splitlines()
+    if lines and _norm_alpha(lines[0]) in variants:
+        return "\n".join(lines[1:]).lstrip("\n").strip()
+
+    return body
+
+
 def validate_cleaned_chunk(
     cleaned: str,
     chunk_text: str,
@@ -630,6 +706,10 @@ def validate_cleaned_chunk(
     spaced_hits = re.findall(r"(?:\b[A-Za-z]\s+){4,}[A-Za-z]\b", cleaned)
     if spaced_hits:
         issues.append(f"letter-spaced text not collapsed: {spaced_hits[:2]}")
+
+    ocr_splits = find_ocr_word_splits(cleaned)
+    if ocr_splits:
+        issues.append(f"possible mid-word OCR split(s) — rejoin broken words: {ocr_splits[:5]}")
 
     return issues
 
@@ -987,7 +1067,7 @@ def main() -> int:
                 unresolved_chunks += 1
             if info.get("flag"):
                 report_lines.append(f"[FLAG] {sec_num:02d}. {sec_title} chunk {c_idx+1}/{len(chunks)}: {info['flag']}")
-        stitched = stitch_chunks(sec_cleaned)
+        stitched = strip_duplicate_chapter_heading(sec_title, stitch_chunks(sec_cleaned))
         if stitched:
             cleaned_sections.append((sec_title, stitched))
             sec_paras = [p.strip() for p in stitched.split("\n\n") if p.strip()]

@@ -79,6 +79,61 @@ def slugify_chapter(title: str, max_len: int = 64) -> str:
     return (slug[:max_len].rstrip("_")) or "Chapter"
 
 
+def _norm_heading(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
+def strip_duplicate_chapter_heading(ch_title: str, ch_body: str) -> str:
+    """Remove a leading chapter heading line/paragraph if it duplicates <<<CHAPTER: ...>>>."""
+    body = ch_body.strip()
+    if not body or not ch_title.strip():
+        return body
+
+    variants = {_norm_heading(ch_title)}
+    m = re.match(r"^(?:chapter|part|section)\s+[0-9ivxlcdm]+[\s:.\-\u2013\u2014]+(.+)$", ch_title.strip(), re.I)
+    if m and _norm_heading(m.group(1)):
+        variants.add(_norm_heading(m.group(1)))
+    variants.discard("")
+    if not variants:
+        return body
+
+    # 1. Check whether the entire first paragraph (possibly wrapped across lines) matches the title
+    parts = re.split(r"\n\s*\n", body, maxsplit=1)
+    if _norm_heading(parts[0]) in variants:
+        return parts[1].strip() if len(parts) > 1 else ""
+
+    # 2. Check whether the first single line matches the title (e.g. "Preface\nSometimes...")
+    lines = body.splitlines()
+    if lines and _norm_heading(lines[0]) in variants:
+        return "\n".join(lines[1:]).lstrip("\n").strip()
+
+    return body
+
+
+def _ensure_spoken_stop(text: str) -> str:
+    s = text.strip()
+    if not s:
+        return s
+    if re.search(r'[.!?…]["\'\u201d\u2019)\]]*$', s):
+        return s
+    return s + "."
+
+
+def _is_standalone_heading_or_attrib(para: str) -> bool:
+    """Heuristic for short standalone subheadings or epigraph attributions needing a longer beat."""
+    s = para.strip()
+    if not s:
+        return False
+    words = s.split()
+    if len(words) > 14:
+        return False
+    if s.startswith(("\u2014", "\u2013", "--", "- ")):
+        return True
+    if not re.search(r'[.!?…]["\'\u201d\u2019)\]]*$', s):
+        return True
+    return False
+
+
 def clean_markdown(text: str) -> str:
     text = re.sub(r"\*+(.*?)\*+", r"\1", text)
     text = re.sub(r"`+(.*?)`+", r"\1", text)
@@ -115,19 +170,32 @@ def split_long_paragraph(paragraph: str, max_chars: int = MAX_CHUNK_CHARS) -> li
 
 def split_text(text: str) -> list[str]:
     raw_paragraphs = [clean_markdown(p) for p in text.split("\n\n") if p.strip()]
-    merged_paragraphs = []
-    buffer = ""
-    for paragraph in raw_paragraphs:
-        combined = f"{buffer}\n\n{paragraph}".strip() if buffer else paragraph
-        words = combined.split()
-        if len(words) > 5 or combined.endswith((".", "?", "!")):
-            merged_paragraphs.append(combined)
-            buffer = ""
-        else:
-            buffer = combined
-    if buffer:
-        merged_paragraphs.append(buffer)
-    return [chunk for paragraph in merged_paragraphs for chunk in split_long_paragraph(paragraph)]
+    return [chunk for paragraph in raw_paragraphs for chunk in split_long_paragraph(paragraph)]
+
+
+def build_narration_segments(
+    body_text: str,
+    chapter_title: str | None = None,
+    chapter_pause: float = 1.2,
+    heading_pause: float = 0.7,
+    paragraph_pause: float = 0.45,
+) -> list[tuple[str, float]]:
+    """Return [(chunk_text, trailing_pause_seconds), ...] preserving chapter, heading, and paragraph beats."""
+    segments: list[tuple[str, float]] = []
+    if chapter_title and chapter_title.strip():
+        segments.append((_ensure_spoken_stop(chapter_title), max(0.0, chapter_pause)))
+
+    raw_paragraphs = [clean_markdown(p) for p in body_text.split("\n\n") if p.strip()]
+    for p_idx, para in enumerate(raw_paragraphs):
+        is_last_para = p_idx == len(raw_paragraphs) - 1
+        is_heading = _is_standalone_heading_or_attrib(para)
+        spoken_para = _ensure_spoken_stop(para) if is_heading else para
+        sub_chunks = split_long_paragraph(spoken_para)
+        pause = 0.0 if is_last_para else (max(0.0, heading_pause) if is_heading else max(0.0, paragraph_pause))
+        for c_idx, chunk in enumerate(sub_chunks):
+            segments.append((chunk, pause if c_idx == len(sub_chunks) - 1 else 0.0))
+
+    return segments
 
 
 def make_batches(paragraphs: list[str], chunks_per_file: int, max_chars_per_file: int) -> list[list[str]]:
@@ -405,6 +473,8 @@ def encode_opus_streaming(
     speed: float,
     bitrate: str,
     metadata: dict[str, str],
+    pauses: list[float] | None = None,
+    lead_in: float = 0.25,
 ):
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = None
@@ -441,11 +511,14 @@ def encode_opus_streaming(
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
         assert proc.stdin is not None
         try:
-            for w in waves:
-                if w.size == 0:
-                    continue
-                pcm16 = np.clip(w * 32767.0, -32768, 32767).astype(np.int16)
-                proc.stdin.write(pcm16.tobytes())
+            if lead_in > 0:
+                proc.stdin.write(b"\x00\x00" * int(round(lead_in * SAMPLE_RATE)))
+            for idx, w in enumerate(waves):
+                if w.size > 0:
+                    pcm16 = np.clip(w * 32767.0, -32768, 32767).astype(np.int16)
+                    proc.stdin.write(pcm16.tobytes())
+                if pauses and idx < len(pauses) and pauses[idx] > 0:
+                    proc.stdin.write(b"\x00\x00" * int(round(pauses[idx] * SAMPLE_RATE)))
         finally:
             proc.stdin.close()
         stderr_data = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
@@ -485,18 +558,12 @@ def convert_book(input_path: Path, args, multiple_inputs: bool, engine: FastKoko
     if use_chapters:
         book_dir = Path(args.output_dir) / slugify_chapter(args.prefix or album_name, max_len=80)
         book_dir.mkdir(parents=True, exist_ok=True)
-        jobs: list[tuple[Path, str, str, int, int]] = []
+        jobs: list[tuple[Path, str, str | None, str, int, int]] = []
         total_parts = len(chapter_entries)
         for idx, (ch_title, ch_body) in enumerate(chapter_entries, start=1):
-            first_line = ch_body.splitlines()[0].strip() if ch_body.splitlines() else ""
-            norm_first = re.sub(r"[^a-z0-9]+", "", first_line.lower())
-            norm_title = re.sub(r"[^a-z0-9]+", "", ch_title.lower())
-            if norm_title and not norm_first.startswith(norm_title[: min(16, len(norm_title))]):
-                spoken_body = f"{ch_title}.\n\n{ch_body}"
-            else:
-                spoken_body = ch_body
+            clean_body = strip_duplicate_chapter_heading(ch_title, ch_body)
             out_file = book_dir / f"{idx:02d}_{slugify_chapter(ch_title)}.opus"
-            jobs.append((out_file, ch_title, spoken_body, idx, total_parts))
+            jobs.append((out_file, ch_title, ch_title, clean_body, idx, total_parts))
         print(
             f"\n{input_path}: {total_parts} chapter(s) ('{album_name}'"
             + (f" by {artist_name}" if artist_name else "")
@@ -516,6 +583,7 @@ def convert_book(input_path: Path, args, multiple_inputs: bool, engine: FastKoko
             (
                 Path(f"{prefix}_Part_{idx:03d}.opus"),
                 f"{book_title} - Part {idx:03d}",
+                None,
                 "\n\n".join(batch),
                 idx,
                 total_parts,
@@ -550,13 +618,25 @@ def convert_book(input_path: Path, args, multiple_inputs: bool, engine: FastKoko
 
     encode_futures: list[tuple[Path, cf.Future]] = []
     with cf.ThreadPoolExecutor(max_workers=2) as enc_pool:
-        for out_file, part_title, part_text, part_idx, part_total in jobs:
+        for out_file, part_title, spoken_heading, part_text, part_idx, part_total in jobs:
             if args.resume and out_file.is_file() and out_file.stat().st_size > 0:
                 print(f"Skipping existing {out_file}")
                 continue
             try:
-                part_chunks = split_text(part_text) if use_chapters else [part_text]
-                phonemes_list = engine.phonemize_batch("\n\n".join(part_chunks))
+                segments = build_narration_segments(
+                    part_text,
+                    chapter_title=spoken_heading,
+                    chapter_pause=args.chapter_pause,
+                    heading_pause=args.heading_pause,
+                    paragraph_pause=args.paragraph_pause,
+                )
+                phonemes_list: list[str] = []
+                pauses_list: list[float] = []
+                for chunk_text, pause_after in segments:
+                    sub_ps = engine.phonemize_batch(chunk_text)
+                    for s_idx, ps in enumerate(sub_ps):
+                        phonemes_list.append(ps)
+                        pauses_list.append(pause_after if s_idx == len(sub_ps) - 1 else 0.0)
                 if not phonemes_list:
                     print(f"Warning: skipping empty section '{part_title}'", file=sys.stderr)
                     continue
@@ -568,7 +648,11 @@ def convert_book(input_path: Path, args, multiple_inputs: bool, engine: FastKoko
                     desc=f"[{part_idx}/{part_total}] {short_label}",
                     show_progress=not args.no_progress,
                 )
-                total_audio_s += sum(len(w) for w in waves) / SAMPLE_RATE
+                total_audio_s += (
+                    sum(len(w) for w in waves) / SAMPLE_RATE
+                    + sum(pauses_list)
+                    + max(0.0, args.lead_in)
+                )
 
                 metadata = {
                     "title": part_title,
@@ -578,7 +662,16 @@ def convert_book(input_path: Path, args, multiple_inputs: bool, engine: FastKoko
                     "genre": args.genre or "Audiobook",
                     "comment": f"Generated by Kokoro-82M (voice={args.voice}, speed={args.speed:g})",
                 }
-                fut = enc_pool.submit(encode_opus_streaming, waves, out_file, args.speed, args.bitrate, metadata)
+                fut = enc_pool.submit(
+                    encode_opus_streaming,
+                    waves,
+                    out_file,
+                    args.speed,
+                    args.bitrate,
+                    metadata,
+                    pauses_list,
+                    args.lead_in,
+                )
                 encode_futures.append((out_file, fut))
 
                 while len(encode_futures) >= 2:
@@ -631,6 +724,10 @@ def parse_args():
     parser.add_argument("--max-chars-per-file", type=int, default=DEFAULT_MAX_CHARS_PER_FILE, help="max chars per part (default: 20000)")
     parser.add_argument("--speed", type=float, default=1.0, help="playback speed via ffmpeg atempo (default: 1.0)")
     parser.add_argument("--model-speed", type=float, default=1.0, help="native Kokoro model speed (default: 1.0)")
+    parser.add_argument("--chapter-pause", type=float, default=1.2, help="silence in seconds after chapter titles (default: 1.2)")
+    parser.add_argument("--heading-pause", type=float, default=0.7, help="silence in seconds after standalone headings/epigraph attributions (default: 0.7)")
+    parser.add_argument("--paragraph-pause", type=float, default=0.45, help="silence in seconds between paragraphs (default: 0.45)")
+    parser.add_argument("--lead-in", type=float, default=0.25, help="leading silence in seconds at the start of each audio file (default: 0.25)")
     parser.add_argument("--bitrate", default="32k", help="Opus bitrate (default: 32k; e.g. 24k, 32k, 48k)")
     parser.add_argument("--prefix", help="output filename/directory prefix")
     parser.add_argument("--output-dir", type=Path, default=Path("."), help="output directory (default: current directory)")

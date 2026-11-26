@@ -1,6 +1,12 @@
 import unittest
 
-from book2opus.tts_kokoro import build_atempo_chain, parse_chaptered_book, slugify_chapter
+from book2opus.tts_kokoro import (
+    build_atempo_chain,
+    build_narration_segments,
+    parse_chaptered_book,
+    slugify_chapter,
+    strip_duplicate_chapter_heading,
+)
 
 
 class TestChapterAndAudioUtils(unittest.TestCase):
@@ -27,6 +33,40 @@ class TestChapterAndAudioUtils(unittest.TestCase):
         self.assertIsNone(build_atempo_chain(1.0))
         self.assertEqual(build_atempo_chain(1.3), "atempo=1.3")
         self.assertEqual(build_atempo_chain(2.5), "atempo=2.0,atempo=1.25")
+
+    def test_strip_duplicate_chapter_heading(self):
+        self.assertEqual(
+            strip_duplicate_chapter_heading("Preface", "Preface\nSometimes one has to say difficult things."),
+            "Sometimes one has to say difficult things.",
+        )
+        self.assertEqual(
+            strip_duplicate_chapter_heading(
+                "Chapter 1: Neoteny and Evolution",
+                "Neoteny and Evolution\n\nIt is the possibility of escaping.",
+            ),
+            "It is the possibility of escaping.",
+        )
+        self.assertEqual(
+            strip_duplicate_chapter_heading(
+                "Communication from a Flying Saucer",
+                "Communication\nfrom a\nFlying Saucer\n\nThe paperback edition.",
+            ),
+            "The paperback edition.",
+        )
+
+    def test_build_narration_segments_pauses(self):
+        body = "A Short Subheading\n\nFirst full paragraph of prose.\n\nSecond full paragraph of prose."
+        segs = build_narration_segments(
+            body,
+            chapter_title="Preface",
+            chapter_pause=1.2,
+            heading_pause=0.7,
+            paragraph_pause=0.45,
+        )
+        self.assertEqual(segs[0], ("Preface.", 1.2))
+        self.assertEqual(segs[1], ("A Short Subheading.", 0.7))
+        self.assertEqual(segs[2], ("First full paragraph of prose.", 0.45))
+        self.assertEqual(segs[3], ("Second full paragraph of prose.", 0.0))
 
 
 if __name__ == "__main__":

@@ -2,9 +2,11 @@ import unittest
 
 from book2opus.prep import (
     _restore_pdf_paragraphs,
+    find_ocr_word_splits,
     postprocess_llm_chunk,
     split_section_into_chunks,
     stitch_chunks,
+    strip_duplicate_chapter_heading,
     validate_cleaned_chunk,
 )
 
@@ -76,6 +78,19 @@ class TestPrepPipeline(unittest.TestCase):
 
         stitched = stitch_chunks(["The dog's body is\n\nalso horizontal while humans are vertical."])
         self.assertEqual(stitched, "The dog's body is also horizontal while humans are vertical.")
+
+    def test_ocr_word_splits_and_heading_dedup(self):
+        self.assertEqual(find_ocr_word_splits("Sometim es Weston L a Barre spoke o f it."), ["Sometim es", "L a", "o f"])
+        self.assertEqual(
+            find_ocr_word_splits("Ramon y Cajal and adult co-workers in the third century b.c. said Except ye."),
+            [],
+        )
+        issues = validate_cleaned_chunk("Sometim es one has to say difficult things.", "raw input", [], "stop")
+        self.assertTrue(any("mid-word OCR split" in i for i in issues))
+        self.assertEqual(
+            strip_duplicate_chapter_heading("Preface", "Preface\nSometimes one has to say difficult things."),
+            "Sometimes one has to say difficult things.",
+        )
 
 
 if __name__ == "__main__":
