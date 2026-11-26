@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+*.opus
+*.wav
+*.mp3
+*.onnx
+*.pt
+*.gguf
+.*_prep_cache/
+*_tts_ready.txt
+*_prep_report.txt
+*.log

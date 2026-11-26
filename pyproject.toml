@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "book2opus"
+version = "0.1.0"
+description = "Turn messy PDFs, EPUBs, and TXT books into clean, chaptered, cover-tagged Opus audiobooks using local LLMs and parallel ONNX TTS."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Sergey Plis" }]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "onnxruntime>=1.18",
+    "pillow>=10.0",
+    "soundfile>=0.12",
+    "tqdm>=4.66",
+    "huggingface-hub>=0.24",
+]
+
+[project.optional-dependencies]
+kokoro = [
+    "kokoro>=0.9.4",
+    "torch>=2.4",
+]
+tiny-voca = [
+    "tiny-voca @ git+https://github.com/n4ze3m/tiny-voca",
+    "dizione @ git+https://github.com/n4ze3m/dizione",
+    "torch>=2.4",
+]
+all = [
+    "book2opus[kokoro,tiny-voca]",
+]
+
+[project.scripts]
+book-prep = "book2opus.prep:main"
+book2opus-prep = "book2opus.prep:main"
+kokoro-fast = "book2opus.tts_kokoro:main"
+book2opus-kokoro = "book2opus.tts_kokoro:main"
+tiny-voca-fast = "book2opus.tts_tinyvoca:main"
+book2opus-tinyvoca = "book2opus.tts_tinyvoca:main"
+fetch-book-cover = "book2opus.cover:main"
+book2opus-cover = "book2opus.cover:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
