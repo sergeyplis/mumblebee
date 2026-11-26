@@ -629,7 +629,7 @@ def parse_args():
     parser.add_argument("--gpu-streams", type=int, default=4, help="concurrent GPU streams in hybrid/gpu mode (default: 4)")
     parser.add_argument("--chunks-per-file", type=int, default=100, help="max logical paragraphs per part (default: 100)")
     parser.add_argument("--max-chars-per-file", type=int, default=DEFAULT_MAX_CHARS_PER_FILE, help="max chars per part (default: 20000)")
-    parser.add_argument("--speed", type=float, default=1.3, help="playback speed via ffmpeg atempo (default: 1.3)")
+    parser.add_argument("--speed", type=float, default=1.0, help="playback speed via ffmpeg atempo (default: 1.0)")
     parser.add_argument("--model-speed", type=float, default=1.0, help="native Kokoro model speed (default: 1.0)")
     parser.add_argument("--bitrate", default="32k", help="Opus bitrate (default: 32k; e.g. 24k, 32k, 48k)")
     parser.add_argument("--prefix", help="output filename/directory prefix")
