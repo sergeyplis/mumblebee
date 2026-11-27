@@ -1,6 +1,7 @@
 import unittest
 
 from mumblebee.tts_kokoro import (
+    apply_pronunciations,
     build_atempo_chain,
     build_narration_segments,
     parse_chaptered_book,
@@ -67,6 +68,12 @@ class TestChapterAndAudioUtils(unittest.TestCase):
         self.assertEqual(segs[1], ("A Short Subheading.", 0.7))
         self.assertEqual(segs[2], ("First full paragraph of prose.", 0.45))
         self.assertEqual(segs[3], ("Second full paragraph of prose.", 0.0))
+
+    def test_los_angeles_pronunciation_override(self):
+        out = apply_pronunciations("University of California at Los Angeles.", {"Los Angeles": "lˌɔs ˈænʤələs"})
+        self.assertEqual(out, "University of California at [Los Angeles](/lˌɔs ˈænʤələs/).")
+        # Idempotent if already overridden
+        self.assertEqual(apply_pronunciations(out, {"Los Angeles": "lˌɔs ˈænʤələs"}), out)
 
 
 if __name__ == "__main__":

@@ -134,6 +134,42 @@ def _is_standalone_heading_or_attrib(para: str) -> bool:
     return False
 
 
+DEFAULT_PRONUNCIATIONS: dict[str, str] = {
+    "Los Angeles": "lˌɔs ˈænʤələs",
+}
+
+
+def load_pronunciations(custom_path: Path | None = None) -> dict[str, str]:
+    """Load built-in pronunciation fixes merged with ~/.config/mumblebee/pronunciations.json and --pronunciations."""
+    table = dict(DEFAULT_PRONUNCIATIONS)
+    candidates: list[Path] = []
+    xdg_cfg = os.environ.get("XDG_CONFIG_HOME")
+    default_cfg = (Path(xdg_cfg).expanduser() if xdg_cfg else Path.home() / ".config") / "mumblebee" / "pronunciations.json"
+    if default_cfg.is_file():
+        candidates.append(default_cfg)
+    if custom_path is not None:
+        candidates.append(custom_path)
+    for path in candidates:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip():
+                    table[k.strip()] = v.strip().strip("/")
+    return table
+
+
+def apply_pronunciations(text: str, pronunciations: dict[str, str] | None) -> str:
+    """Apply misaki inline IPA overrides ([Word](/ipa/)) for known tricky phrases like 'Los Angeles'."""
+    if not pronunciations or not text:
+        return text
+    # Longest phrases first so multi-word names match before single words
+    for phrase in sorted(pronunciations, key=len, reverse=True):
+        ipa = pronunciations[phrase].strip("/")
+        pattern = re.compile(rf"(?<!\[)\b{re.escape(phrase)}\b(?!\]\(/)" , re.IGNORECASE)
+        text = pattern.sub(lambda m, _ipa=ipa: f"[{m.group(0)}](/{_ipa}/)", text)
+    return text
+
+
 def clean_markdown(text: str) -> str:
     text = re.sub(r"\*+(.*?)\*+", r"\1", text)
     text = re.sub(r"`+(.*?)`+", r"\1", text)
@@ -179,11 +215,13 @@ def build_narration_segments(
     chapter_pause: float = 1.2,
     heading_pause: float = 0.7,
     paragraph_pause: float = 0.45,
+    pronunciations: dict[str, str] | None = None,
 ) -> list[tuple[str, float]]:
     """Return [(chunk_text, trailing_pause_seconds), ...] preserving chapter, heading, and paragraph beats."""
+    pron = DEFAULT_PRONUNCIATIONS if pronunciations is None else pronunciations
     segments: list[tuple[str, float]] = []
     if chapter_title and chapter_title.strip():
-        segments.append((_ensure_spoken_stop(chapter_title), max(0.0, chapter_pause)))
+        segments.append((apply_pronunciations(_ensure_spoken_stop(chapter_title), pron), max(0.0, chapter_pause)))
 
     raw_paragraphs = [clean_markdown(p) for p in body_text.split("\n\n") if p.strip()]
     for p_idx, para in enumerate(raw_paragraphs):
@@ -193,7 +231,7 @@ def build_narration_segments(
         sub_chunks = split_long_paragraph(spoken_para)
         pause = 0.0 if is_last_para else (max(0.0, heading_pause) if is_heading else max(0.0, paragraph_pause))
         for c_idx, chunk in enumerate(sub_chunks):
-            segments.append((chunk, pause if c_idx == len(sub_chunks) - 1 else 0.0))
+            segments.append((apply_pronunciations(chunk, pron), pause if c_idx == len(sub_chunks) - 1 else 0.0))
 
     return segments
 
@@ -613,6 +651,7 @@ def convert_book(input_path: Path, args, multiple_inputs: bool, engine: FastKoko
             except Exception as exc:
                 print(f"Cover lookup skipped ({exc})", flush=True)
 
+    pronunciations = load_pronunciations(args.pronunciations)
     t_book0 = time.perf_counter()
     total_audio_s = 0.0
 
@@ -629,6 +668,7 @@ def convert_book(input_path: Path, args, multiple_inputs: bool, engine: FastKoko
                     chapter_pause=args.chapter_pause,
                     heading_pause=args.heading_pause,
                     paragraph_pause=args.paragraph_pause,
+                    pronunciations=pronunciations,
                 )
                 phonemes_list: list[str] = []
                 pauses_list: list[float] = []
@@ -729,6 +769,7 @@ def parse_args(argv: list[str] | None = None, prog: str | None = None):
     parser.add_argument("--heading-pause", type=float, default=0.7, help="silence in seconds after standalone headings/epigraph attributions (default: 0.7)")
     parser.add_argument("--paragraph-pause", type=float, default=0.45, help="silence in seconds between paragraphs (default: 0.45)")
     parser.add_argument("--lead-in", type=float, default=0.25, help="leading silence in seconds at the start of each audio file (default: 0.25)")
+    parser.add_argument("--pronunciations", type=Path, help="optional JSON map of {\"Phrase\": \"IPA\"} pronunciation overrides (merged with built-ins & ~/.config/mumblebee/pronunciations.json)")
     parser.add_argument("--bitrate", default="32k", help="Opus bitrate (default: 32k; e.g. 24k, 32k, 48k)")
     parser.add_argument("--prefix", help="output filename/directory prefix")
     parser.add_argument("--output-dir", type=Path, default=Path("."), help="output directory (default: current directory)")
