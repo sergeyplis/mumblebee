@@ -1,6 +1,6 @@
 """Parallel Kokoro-82M audiobook CLI (ONNX CPU, Hybrid CPU+GPU, ROCm/CUDA, PyTorch).
 
-Reads plain text or book2opus <<<CHAPTER: ...>>> scripts, synthesizes chunks in
+Reads plain text or mumblebee <<<CHAPTER: ...>>> scripts, synthesizes chunks in
 parallel (longest-first LPT scheduling), streams PCM directly into background
 ffmpeg libopus encoders with Vorbis metadata tags, and auto-fetches cover.png.
 """

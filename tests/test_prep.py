@@ -1,6 +1,6 @@
 import unittest
 
-from book2opus.prep import (
+from mumblebee.prep import (
     _restore_pdf_paragraphs,
     find_ocr_word_splits,
     postprocess_llm_chunk,

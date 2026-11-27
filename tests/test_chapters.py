@@ -1,6 +1,6 @@
 import unittest
 
-from book2opus.tts_kokoro import (
+from mumblebee.tts_kokoro import (
     build_atempo_chain,
     build_narration_segments,
     parse_chaptered_book,

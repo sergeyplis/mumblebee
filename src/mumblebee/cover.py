@@ -21,7 +21,7 @@ from PIL import Image
 
 from .epub import extract_epub_cover_bytes
 
-USER_AGENT = "book2opus/0.1 (personal audiobook cover fetcher)"
+USER_AGENT = "mumblebee/0.1 (personal audiobook cover fetcher)"
 MIN_DIM = 140
 
 

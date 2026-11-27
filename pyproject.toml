@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "book2opus"
+name = "mumblebee"
 version = "0.1.0"
-description = "Turn messy PDFs, EPUBs, and TXT books into clean, chaptered, cover-tagged Opus audiobooks using local LLMs and parallel ONNX TTS."
+description = "Turn messy PDFs, EPUBs, and OCR'd books into clean, chaptered, cover-tagged local audiobooks using local LLMs and parallel ONNX TTS."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Sergey Plis" }]
@@ -30,18 +30,18 @@ tiny-voca = [
     "torch>=2.4",
 ]
 all = [
-    "book2opus[kokoro,tiny-voca]",
+    "mumblebee[kokoro,tiny-voca]",
 ]
 
 [project.scripts]
-book-prep = "book2opus.prep:main"
-book2opus-prep = "book2opus.prep:main"
-kokoro-fast = "book2opus.tts_kokoro:main"
-book2opus-kokoro = "book2opus.tts_kokoro:main"
-tiny-voca-fast = "book2opus.tts_tinyvoca:main"
-book2opus-tinyvoca = "book2opus.tts_tinyvoca:main"
-fetch-book-cover = "book2opus.cover:main"
-book2opus-cover = "book2opus.cover:main"
+mumblebee-prep = "mumblebee.prep:main"
+book-prep = "mumblebee.prep:main"
+mumblebee-kokoro = "mumblebee.tts_kokoro:main"
+kokoro-fast = "mumblebee.tts_kokoro:main"
+mumblebee-tinyvoca = "mumblebee.tts_tinyvoca:main"
+tiny-voca-fast = "mumblebee.tts_tinyvoca:main"
+mumblebee-cover = "mumblebee.cover:main"
+fetch-book-cover = "mumblebee.cover:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

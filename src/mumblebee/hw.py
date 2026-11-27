@@ -26,13 +26,13 @@ def physical_cpu_count() -> int:
 
 def cache_dir() -> Path:
     """Return writable cache directory for pre-optimized ONNX graphs and downloaded weights."""
-    override = os.environ.get("BOOK2OPUS_CACHE_DIR")
+    override = os.environ.get("MUMBLEBEE_CACHE_DIR")
     if override:
         path = Path(override).expanduser()
     else:
         xdg = os.environ.get("XDG_CACHE_HOME")
         base = Path(xdg).expanduser() if xdg else (Path.home() / ".cache")
-        path = base / "book2opus"
+        path = base / "mumblebee"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

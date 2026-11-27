@@ -5,8 +5,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from book2opus.cover import fetch_book_cover
-from book2opus.epub import extract_epub
+from mumblebee.cover import fetch_book_cover
+from mumblebee.epub import extract_epub
 
 
 class TestEpubExtraction(unittest.TestCase):

@@ -33,10 +33,10 @@ from tqdm import tqdm
 
 from .epub import extract_epub
 
-DEFAULT_API_URL = os.environ.get("BOOK2OPUS_API_URL", "http://127.0.0.1:8081/v1/chat/completions")
-DEFAULT_MODEL = os.environ.get("BOOK2OPUS_MODEL", "qwen3-4b-instruct")
-DEFAULT_FALLBACK_API_URL = os.environ.get("BOOK2OPUS_FALLBACK_API_URL", "http://127.0.0.1:8080/v1/chat/completions")
-DEFAULT_FALLBACK_MODEL = os.environ.get("BOOK2OPUS_FALLBACK_MODEL", "qwen3.8-flash-next")
+DEFAULT_API_URL = os.environ.get("MUMBLEBEE_API_URL", "http://127.0.0.1:8081/v1/chat/completions")
+DEFAULT_MODEL = os.environ.get("MUMBLEBEE_MODEL", "qwen3-4b-instruct")
+DEFAULT_FALLBACK_API_URL = os.environ.get("MUMBLEBEE_FALLBACK_API_URL", "http://127.0.0.1:8080/v1/chat/completions")
+DEFAULT_FALLBACK_MODEL = os.environ.get("MUMBLEBEE_FALLBACK_MODEL", "qwen3.8-flash-next")
 
 LIGATURES = str.maketrans({
     "\ufb00": "ff",
@@ -857,7 +857,7 @@ def stitch_chunks(cleaned_chunks: list[str]) -> str:
 
 
 def _find_fast_server_cmd() -> list[str] | None:
-    env_cmd = os.environ.get("BOOK2OPUS_FAST_SERVER_CMD")
+    env_cmd = os.environ.get("MUMBLEBEE_FAST_SERVER_CMD")
     if env_cmd:
         return shlex.split(env_cmd)
     found = shutil.which("book-prep-server")
@@ -893,7 +893,7 @@ def main() -> int:
     parser.add_argument("--max-chapters", type=int, default=0, help="Optional: only process first N chapters (for fast testing)")
     parser.add_argument("--resume", action="store_true", help="Resume from cached structure and cleaned chunks")
     parser.add_argument("--no-cache", action="store_true", help="Ignore existing cache and re-run from scratch")
-    parser.add_argument("--stop-server", action="store_true", help="Stop helper server (if configured via BOOK2OPUS_FAST_SERVER_CMD or book-prep-server) when done")
+    parser.add_argument("--stop-server", action="store_true", help="Stop helper server (if configured via MUMBLEBEE_FAST_SERVER_CMD or book-prep-server) when done")
     parser.add_argument(
         "--tts",
         choices=("none", "kokoro", "tiny-voca"),
@@ -1117,7 +1117,7 @@ def main() -> int:
 
     if args.tts == "kokoro":
         cmd = [
-            sys.executable, "-m", "book2opus.tts_kokoro",
+            sys.executable, "-m", "mumblebee.tts_kokoro",
             "--input", str(out_path),
             "--by-chapter",
             "--backend", "auto",
@@ -1130,8 +1130,8 @@ def main() -> int:
         print("Running Kokoro per-chapter conversion:", " ".join(cmd), flush=True)
         subprocess.run(cmd, check=True)
     elif args.tts == "tiny-voca":
-        tv_bin = shutil.which("tiny-voca-fast") or shutil.which("book2opus-tinyvoca")
-        cmd = ([tv_bin] if tv_bin else [sys.executable, "-m", "book2opus.tts_tinyvoca"]) + [
+        tv_bin = shutil.which("mumblebee-tinyvoca") or shutil.which("tiny-voca-fast")
+        cmd = ([tv_bin] if tv_bin else [sys.executable, "-m", "mumblebee.tts_tinyvoca"]) + [
             "--text-file", str(out_path),
             "--output", str(args.tts_output_dir / f"{args.input.stem}.opus"),
         ]
