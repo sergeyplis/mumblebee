@@ -1,7 +1,10 @@
+import json
 import unittest
+from unittest import mock
 
 from mumblebee.prep import (
     _restore_pdf_paragraphs,
+    detect_structure,
     find_ocr_word_splits,
     postprocess_llm_chunk,
     split_section_into_chunks,
@@ -87,10 +90,52 @@ class TestPrepPipeline(unittest.TestCase):
         )
         issues = validate_cleaned_chunk("Sometim es one has to say difficult things.", "raw input", [], "stop")
         self.assertTrue(any("mid-word OCR split" in i for i in issues))
+        # Born-digital EPUB mode skips OCR split checks so math variables ('say n', 'code x') aren't flagged
+        self.assertEqual(
+            validate_cleaned_chunk("Let n be the size and code x represent the token b.", "raw input", [], "stop", check_ocr_splits=False),
+            [],
+        )
         self.assertEqual(
             strip_duplicate_chapter_heading("Preface", "Preface\nSometimes one has to say difficult things."),
             "Sometimes one has to say difficult things.",
         )
+
+    def test_detect_structure_guards_last_chapter_truncation(self):
+        lines = (
+            ["Contents", "1 Intro", "2 Finale", "Notes"]
+            + ["Chapter 1", "Intro body line."] * 10
+            + ["CHAPTER 2", "Finale heading"]
+            + ["Important concluding prose line."] * 15
+            + ["\f", "NOTES", "1. Some footnote reference."]
+        )
+        ch2_line = lines.index("CHAPTER 2") + 1
+        notes_line = lines.index("NOTES") + 1
+        resp_1a = json.dumps(
+            {
+                "title": "Demo Book",
+                "author": "Author",
+                "running_headers": [],
+                "toc_end_line": 4,
+                "toc_sections": ["1 Intro", "2 Finale"],
+                "back_matter_titles": ["Notes"],
+            }
+        )
+        # Simulate buggy 4B response setting body_end_line == start of last chapter
+        resp_1b = json.dumps(
+            {
+                "body_start_line": 5,
+                "body_end_line": ch2_line,
+                "sections": [
+                    {"title": "1 Intro", "start_line": 5},
+                    {"title": "2 Finale", "start_line": ch2_line},
+                ],
+            }
+        )
+        with mock.patch("mumblebee.prep.llm_chat", side_effect=[(resp_1a, {}), (resp_1b, {})]):
+            struct = detect_structure(lines, "http://127.0.0.1:8081/v1/chat/completions", "mock-model")
+        # Guard must extend body_end_line right up to before NOTES (not truncate Chapter 2 at 1 line!)
+        self.assertGreater(struct["body_end_line"], ch2_line + 10)
+        self.assertLess(struct["body_end_line"], notes_line)
 
 
 if __name__ == "__main__":
