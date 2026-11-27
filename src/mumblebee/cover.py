@@ -164,9 +164,10 @@ def fetch_book_cover(
     return True, source
 
 
-def main() -> int:
+def main(argv: list[str] | None = None, prog: str | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Fetch a book cover image (EPUB -> Open Library -> Google Books -> PDF page 1)."
+        prog=prog,
+        description="Fetch a book cover image (EPUB -> Open Library -> Google Books -> PDF page 1).",
     )
     parser.add_argument("--title", required=True, help="Book title")
     parser.add_argument("--author", default="", help="Author name (optional, improves matching)")
@@ -174,7 +175,7 @@ def main() -> int:
     parser.add_argument("--pdf", type=Path, help="Optional fallback PDF file (renders page 1 if online lookup fails)")
     parser.add_argument("-o", "--output", type=Path, default=Path("cover.png"), help="Output image path (default: cover.png)")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing cover file")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     ok, info = fetch_book_cover(
         title=args.title,

@@ -46,12 +46,12 @@ Meanwhile, cloud audiobook/TTS services are expensive, upload your personal libr
 
 ```mermaid
 flowchart LR
-    SRC["Book (.epub / .pdf / .txt / .md)"] --> PREP["mumblebee-prep\nStage 1: Structure & TOC\nStage 2: Fast LLM + Validator + Tier-2 Fallback"]
+    SRC["Book (.epub / .pdf / .txt / .md)"] --> PREP["mumblebee prep\nStage 1: Structure & TOC\nStage 2: Fast LLM + Validator + Tier-2 Fallback"]
     PREP --> TXT["Book_tts_ready.txt\n(<<<CHAPTER>>> markers)"]
     PREP --> RPT["Book_prep_report.txt\n(Audit & escalation log)"]
-    TXT --> KOKORO["mumblebee-kokoro\n(Parallel ONNX / Hybrid TTS\n+ deterministic pauses)"]
-    TXT --> TV["mumblebee-tinyvoca\n(Ultra-fast 4.5M ONNX TTS)"]
-    SRC -.-> COVER["mumblebee-cover\n(EPUB -> Open Library ->\nGoogle Books -> PDF p.1)"]
+    TXT --> KOKORO["mumblebee kokoro\n(Parallel ONNX / Hybrid TTS\n+ deterministic pauses)"]
+    TXT --> TV["mumblebee tinyvoca\n(Ultra-fast 4.5M ONNX TTS)"]
+    SRC -.-> COVER["mumblebee cover\n(EPUB -> Open Library ->\nGoogle Books -> PDF p.1)"]
     KOKORO --> OUT["Book_Title/\n01_Preface.opus\n02_Chapter_1.opus\n...\ncover.png"]
     COVER --> OUT
     TV --> OUT2["Book_Title.opus"]
@@ -59,16 +59,17 @@ flowchart LR
 
 ---
 
-## Tools & Performance
+## Commands & Performance
 
 Measured on an AMD Ryzen AI MAX+ 395 (16 Zen 5 cores / Radeon 8060S APU, 256 GB/s unified memory):
 
-| CLI (and alias) | Purpose | Typical Speed |
+| Command | Purpose | Typical Speed |
 |---|---|---|
-| **`mumblebee-prep`** (`book-prep`) | Cleans `.epub`/`.pdf`/`.txt`/`.md` into a verbatim `*_tts_ready.txt` with `<<<BOOK_TITLE>>>`, `<<<BOOK_AUTHOR>>>`, and `<<<CHAPTER: ...>>>` markers plus an audit report. | ~100–130 agg tok/s (~15 min for an 86k-word OCR PDF via 4-slot `Qwen3-4B` + Tier-2 escalation) |
-| **`mumblebee-kokoro`** (`kokoro-fast`) | Parallel Kokoro-82M TTS producing one Vorbis-tagged `.opus` file per chapter + `cover.png`, with deterministic chapter/heading/paragraph pauses. | **~31–35× RT** (ONNX CPU FP32, 0 MB GPU) / **~40.5× RT** (Hybrid CPU+ROCm) |
-| **`mumblebee-tinyvoca`** (`tiny-voca-fast`) | Ultra-fast 4.5M-parameter parallel ONNX TTS (`M2`/`F2` voices) with pacing controls, live progress bars, and tagged `.opus` output. | **~1,150–1,200× RT** synthesis (~850× RT end-to-end WAV) |
-| **`mumblebee-cover`** (`fetch-book-cover`) | Zero-API-key cover fetcher saving `cover.png`: embedded EPUB cover → Open Library → Google Books → PDF page 1 fallback. Also called automatically by `mumblebee-kokoro`. | ~1–2 s |
+| **`mumblebee <book>`** | End-to-end shorthand: cleans `.epub`/`.pdf`/`.txt`/`.md` into `*_tts_ready.txt` + audit report, then renders chaptered `.opus` + `cover.png` via Kokoro (`--tts tiny-voca` to switch engines). | ~15 min prep + ~15 min TTS for an 86k-word OCR PDF |
+| **`mumblebee prep <book>`** | Cleans and audits book text only (`*_tts_ready.txt` with `<<<BOOK_TITLE>>>`, `<<<BOOK_AUTHOR>>>`, and `<<<CHAPTER: ...>>>` markers + `*_prep_report.txt`). | ~100–130 agg tok/s (4-slot `Qwen3-4B` + Tier-2 escalation) |
+| **`mumblebee kokoro`** | Parallel Kokoro-82M TTS producing one Vorbis-tagged `.opus` file per chapter + `cover.png`, with deterministic chapter/heading/paragraph pauses. | **~31–35× RT** (ONNX CPU FP32, 0 MB GPU) / **~40.5× RT** (Hybrid CPU+ROCm) |
+| **`mumblebee tinyvoca`** | Ultra-fast 4.5M-parameter parallel ONNX TTS (`M2`/`F2` voices) with pacing controls, live progress bars, and tagged `.opus` output. | **~1,150–1,200× RT** synthesis (~850× RT end-to-end WAV) |
+| **`mumblebee cover`** | Zero-API-key cover fetcher saving `cover.png`: embedded EPUB cover → Open Library → Google Books → PDF page 1 fallback. Also called automatically by `mumblebee kokoro`. | ~1–2 s |
 
 ---
 
@@ -96,62 +97,66 @@ pip install -e ".[all]"
 
 ### 1. End-to-End (Book → Clean Text → Per-Chapter Opus + Cover)
 
-Point `mumblebee-prep` at any OpenAI-compatible LLM server (`llama-server`, Ollama, vLLM, LM Studio, etc.). See [examples/strix-halo-llama-server.sh](examples/strix-halo-llama-server.sh) for a reference 4-slot `Qwen3-4B-Instruct` launcher.
+Point `mumblebee` at any OpenAI-compatible LLM server (`llama-server`, Ollama, vLLM, LM Studio, etc.). See [examples/strix-halo-llama-server.sh](examples/strix-halo-llama-server.sh) for a reference 4-slot `Qwen3-4B-Instruct` launcher.
 
 ```bash
-mumblebee-prep MyBook.epub \
+# Default shorthand runs full prep + Kokoro TTS:
+mumblebee MyBook.epub --output-dir ./books --resume
+
+# Or specify custom LLM endpoints explicitly:
+mumblebee MyBook.epub \
   --api-url http://127.0.0.1:8081/v1/chat/completions --model qwen3-4b-instruct \
   --fallback-api-url http://127.0.0.1:8080/v1/chat/completions --fallback-model qwen3.8-flash-next \
-  --resume --tts kokoro --tts-output-dir ./books
+  --output-dir ./books --resume
 ```
 
 Environment variables (`MUMBLEBEE_API_URL`, `MUMBLEBEE_MODEL`, `MUMBLEBEE_FALLBACK_API_URL`, `MUMBLEBEE_FALLBACK_MODEL`, `MUMBLEBEE_CACHE_DIR`, `MUMBLEBEE_FAST_SERVER_CMD`, `OPENAI_API_KEY`) can also be set so you don't have to pass URLs on every run.
 
 ### 2. Step-by-Step Workflow (Recommended for OCR PDFs)
 
-#### Step A — Clean & Audit Text (`mumblebee-prep`)
+#### Step A — Clean & Audit Text (`mumblebee prep`)
 ```bash
 # Clean an EPUB or PDF (keeps Preface/Intro, drops endnotes/bibliography/index):
-mumblebee-prep MyBook.pdf --resume
+mumblebee prep MyBook.pdf --resume
 
 # Keep narrative Appendices too:
-mumblebee-prep MyBook.pdf --keep-appendices --resume
+mumblebee prep MyBook.pdf --keep-appendices --resume
 
 # Fast sanity test on the first 3 sections only:
-mumblebee-prep MyBook.pdf --max-chapters 3 --resume
+mumblebee prep MyBook.pdf --max-chapters 3 --resume
 ```
 Review `MyBook_prep_report.txt` (shows any escalated or flagged chunks) and skim `MyBook_tts_ready.txt` before rendering audio.
 
-#### Step B1 — Render Per-Chapter Opus with Kokoro (`mumblebee-kokoro`)
+#### Step B1 — Render Per-Chapter Opus with Kokoro (`mumblebee kokoro`)
 ```bash
 # Auto-detects <<<CHAPTER: ...>>>, title/author tags, cover.png, and safe backend:
-mumblebee-kokoro --input MyBook_tts_ready.txt --output-dir ./books
+mumblebee kokoro --input MyBook_tts_ready.txt --output-dir ./books
 
 # Customize voice, pauses, bitrate, or playback speed:
-mumblebee-kokoro --input MyBook_tts_ready.txt \
+mumblebee kokoro --input MyBook_tts_ready.txt \
   --voice af_heart \
   --chapter-pause 1.2 --heading-pause 0.7 --paragraph-pause 0.45 \
   --bitrate 32k --output-dir ./books
 
 # Force 0-GPU ONNX CPU mode (~31-35x RT, leaves GPU free for LLMs):
-mumblebee-kokoro --input MyBook_tts_ready.txt --backend onnx --output-dir ./books
+mumblebee kokoro --input MyBook_tts_ready.txt --backend onnx --output-dir ./books
 
 # Force Hybrid CPU + GPU mode (~40.5x RT when GPU is free):
-mumblebee-kokoro --input MyBook_tts_ready.txt --backend hybrid --output-dir ./books
+mumblebee kokoro --input MyBook_tts_ready.txt --backend hybrid --output-dir ./books
 ```
 
-#### Step B2 — Render with `tiny-voca` (`mumblebee-tinyvoca`)
+#### Step B2 — Render with `tiny-voca` (`mumblebee tinyvoca`)
 ```bash
-mumblebee-tinyvoca \
+mumblebee tinyvoca \
   --text-file MyBook_tts_ready.txt \
   --voice M2 --speed 0.88 --sentence-pause 0.15 --paragraph-pause 0.45 \
   --bitrate 32k --artist "Author Name" --album "Book Title" --title "Book Title" \
   -o ./books/MyBook_M2.opus
 ```
 
-#### Step C — Standalone Cover Fetch (`mumblebee-cover`)
+#### Step C — Standalone Cover Fetch (`mumblebee cover`)
 ```bash
-mumblebee-cover --title "Growing Young" --author "Ashley Montagu" --pdf GrowingYoung.pdf -o ./books/Growing_Young/cover.png
+mumblebee cover --title "Growing Young" --author "Ashley Montagu" --pdf GrowingYoung.pdf -o ./books/Growing_Young/cover.png
 ```
 
 ---
@@ -161,7 +166,7 @@ mumblebee-cover --title "Growing Young" --author "Ashley Montagu" --pdf GrowingY
 These empirical lessons shaped every major design decision—recorded here because code alone rarely explains *why* alternatives were rejected:
 
 ### 1. Why LLM preprocessing instead of regex/grep
-Real books—especially academic non-fiction and OCR'd PDFs—entangle layout noise semantically with prose. A regex cannot reliably tell whether `century14` is a footnote number or a measurement, cannot repair arbitrary OCR word splits (`ad u lth oo d`, `Sometim es`), cannot stitch a sentence interrupted mid-clause by a 20-line floating table or 4 pages of skull diagrams, and cannot distinguish a keep-worthy Preface from 80 pages of endnotes. Decoupling **`mumblebee-prep` → `*_tts_ready.txt` → TTS** lets you verify the text once and re-synthesize cheaply with any voice or engine.
+Real books—especially academic non-fiction and OCR'd PDFs—entangle layout noise semantically with prose. A regex cannot reliably tell whether `century14` is a footnote number or a measurement, cannot repair arbitrary OCR word splits (`ad u lth oo d`, `Sometim es`), cannot stitch a sentence interrupted mid-clause by a 20-line floating table or 4 pages of skull diagrams, and cannot distinguish a keep-worthy Preface from 80 pages of endnotes. Decoupling **`mumblebee prep` → `*_tts_ready.txt` → TTS** lets you verify the text once and re-synthesize cheaply with any voice or engine.
 
 ### 2. Why two-tier LLM cleaning (fast 4B + validator escalation) beats one giant model
 - On 256 GB/s unified memory, an ~85 GB frontier model is memory-bandwidth-bound (~24–32 tok/s, ~70 min/book). Verbatim copy-editing does not require frontier reasoning on 90% of chunks.
@@ -176,7 +181,7 @@ Real books—especially academic non-fiction and OCR'd PDFs—entangle layout no
 - **Prefer `.epub` over `.pdf` whenever available**: Pure-stdlib EPUB extraction provides exact spine reading order, Dublin Core metadata, clean structural pre-stripping of `<figcaption>`, `<aside epub:type="footnote">`, and `<sup>` footnote markers (while preserving ordinals like `2nd`), plus the embedded publisher cover.
 
 ### 4. Deterministic Pacing & Clean Speed belong in the TTS Layer (Not the LLM)
-- **Never rely on an LLM for audio timing**: Even if a heading loses a blank line or repeats the `<<<CHAPTER: ...>>>` title, `mumblebee-kokoro` deterministically strips duplicate leading chapter titles (with or without `Chapter N:` prefixes), appends terminal punctuation so Kokoro uses a clean falling intonation, and streams exact silence beats (`--lead-in`, `--chapter-pause`, `--heading-pause`, `--paragraph-pause`) straight into `ffmpeg`.
+- **Never rely on an LLM for audio timing**: Even if a heading loses a blank line or repeats the `<<<CHAPTER: ...>>>` title, `mumblebee kokoro` deterministically strips duplicate leading chapter titles (with or without `Chapter N:` prefixes), appends terminal punctuation so Kokoro uses a clean falling intonation, and streams exact silence beats (`--lead-in`, `--chapter-pause`, `--heading-pause`, `--paragraph-pause`) straight into `ffmpeg`.
 - **Why `--speed` defaults to `1.0`**: Baking `ffmpeg atempo=1.3` into a lossy `.opus` file and then listening at `1.2×` in an audiobook player applies WSOLA time-stretching *twice* across lossy compression. Generating at clean `1.0×` lets your player handle speed adjustment in a single pass with noticeably cleaner audio.
 
 ### 5. Why Parallel ONNX Runtime CPU Beats (or Ties) GPU for TTS

@@ -875,9 +875,10 @@ def maybe_start_fast_server(api_url: str) -> list[str] | None:
     return cmd
 
 
-def main() -> int:
+def main(argv: list[str] | None = None, prog: str | None = None, default_tts: str = "none") -> int:
     parser = argparse.ArgumentParser(
-        description="Clean and chapter-split an EPUB/PDF/TXT book for TTS using an OpenAI-compatible LLM server."
+        prog=prog,
+        description="Clean and chapter-split an EPUB/PDF/TXT book for TTS using an OpenAI-compatible LLM server.",
     )
     parser.add_argument("input", type=Path, help="Input .epub, .pdf, .txt, or .md book file")
     parser.add_argument("-o", "--output", type=Path, help="Output cleaned text path (default: <stem>_tts_ready.txt)")
@@ -897,13 +898,20 @@ def main() -> int:
     parser.add_argument(
         "--tts",
         choices=("none", "kokoro", "tiny-voca"),
-        default="none",
-        help="Optionally launch TTS conversion right after cleaning (default: none)",
+        default=default_tts,
+        help=f"TTS backend to run after cleaning (default: {default_tts})",
     )
-    parser.add_argument("--tts-output-dir", type=Path, default=Path("."), help="Output dir when using --tts")
+    parser.add_argument(
+        "--output-dir",
+        "--tts-output-dir",
+        dest="tts_output_dir",
+        type=Path,
+        default=Path("."),
+        help="Output directory for generated audio when running TTS (default: current directory)",
+    )
     parser.add_argument("--voice", help="Voice override when using --tts")
     parser.add_argument("--speed", type=float, help="Speed override when using --tts")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.input.is_file():
         print(f"Error: input file not found: {args.input}", file=sys.stderr)
@@ -1130,8 +1138,8 @@ def main() -> int:
         print("Running Kokoro per-chapter conversion:", " ".join(cmd), flush=True)
         subprocess.run(cmd, check=True)
     elif args.tts == "tiny-voca":
-        tv_bin = shutil.which("mumblebee-tinyvoca") or shutil.which("tiny-voca-fast")
-        cmd = ([tv_bin] if tv_bin else [sys.executable, "-m", "mumblebee.tts_tinyvoca"]) + [
+        cmd = [
+            sys.executable, "-m", "mumblebee.tts_tinyvoca",
             "--text-file", str(out_path),
             "--output", str(args.tts_output_dir / f"{args.input.stem}.opus"),
         ]

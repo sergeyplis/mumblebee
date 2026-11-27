@@ -700,10 +700,11 @@ def convert_book(input_path: Path, args, multiple_inputs: bool, engine: FastKoko
     return True
 
 
-def parse_args():
+def parse_args(argv: list[str] | None = None, prog: str | None = None):
     default_workers = physical_cpu_count()
     parser = argparse.ArgumentParser(
-        description="Convert text books (plain or <<<CHAPTER>>> marked) to tagged Opus audiobooks with Kokoro-82M."
+        prog=prog,
+        description="Convert text books (plain or <<<CHAPTER>>> marked) to tagged Opus audiobooks with Kokoro-82M.",
     )
     parser.add_argument("--input", required=True, nargs="+", type=Path, help="one or more input TXT files")
     parser.add_argument("--lines", help="optional 1-based line range START:END for excerpts")
@@ -738,7 +739,7 @@ def parse_args():
     parser.add_argument("--genre", default="Audiobook", help="genre tag (default: Audiobook)")
     parser.add_argument("--no-cover", action="store_true", help="do not auto-fetch cover.png")
     parser.add_argument("--no-progress", action="store_true", help="disable tqdm progress bars")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.chunks_per_file < 1 or args.max_chars_per_file < 1:
         parser.error("--chunks-per-file and --max-chars-per-file must be >= 1")
@@ -752,10 +753,9 @@ def parse_args():
     return args
 
 
-def main() -> int:
+def main(argv: list[str] | None = None, prog: str | None = None) -> int:
+    args = parse_args(argv=argv, prog=prog)
     import torch
-
-    args = parse_args()
     backend = args.backend
     if backend == "auto":
         if args.device == "cpu" or not torch.cuda.is_available() or process_running("llama-server"):

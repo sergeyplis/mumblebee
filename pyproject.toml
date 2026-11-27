@@ -34,14 +34,7 @@ all = [
 ]
 
 [project.scripts]
-mumblebee-prep = "mumblebee.prep:main"
-book-prep = "mumblebee.prep:main"
-mumblebee-kokoro = "mumblebee.tts_kokoro:main"
-kokoro-fast = "mumblebee.tts_kokoro:main"
-mumblebee-tinyvoca = "mumblebee.tts_tinyvoca:main"
-tiny-voca-fast = "mumblebee.tts_tinyvoca:main"
-mumblebee-cover = "mumblebee.cover:main"
-fetch-book-cover = "mumblebee.cover:main"
+mumblebee = "mumblebee.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

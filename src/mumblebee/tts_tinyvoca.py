@@ -438,9 +438,9 @@ def save_audio_streaming(
         pbar.close()
 
 
-def main() -> int:
+def main(argv: list[str] | None = None, prog: str | None = None) -> int:
     default_workers = physical_cpu_count()
-    parser = argparse.ArgumentParser(description="Fast parallel ONNX tiny-voca TTS CLI (Opus default + tags)")
+    parser = argparse.ArgumentParser(prog=prog, description="Fast parallel ONNX tiny-voca TTS CLI (Opus default + tags)")
     src = parser.add_mutually_exclusive_group(required=True)
     src.add_argument("--text", help="Text to synthesize")
     src.add_argument("--text-file", type=Path, help="UTF-8 text file to synthesize")
@@ -463,7 +463,7 @@ def main() -> int:
     parser.add_argument("--genre", default="Audiobook", help="Genre tag (default: Audiobook)")
     parser.add_argument("--comment", help="Comment tag")
     parser.add_argument("--no-progress", action="store_true", help="Disable progress bars")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.text is not None:
         text = args.text
