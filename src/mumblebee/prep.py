@@ -354,6 +354,16 @@ CANDIDATE LINES IN BODY (total book lines = {n}):
         sections = [{"title": meta_1a.get("title") or "Full Book", "start_line": b_start}]
     else:
         sections[0]["start_line"] = min(sections[0]["start_line"], b_start)
+        # Guard against a model accidentally setting body_end_line == last section's start_line
+        last_start = sections[-1]["start_line"]
+        if b_end <= last_start + 5 and last_start < n:
+            fallback_end = n
+            back_re = re.compile(r"^(?:notes|endnotes|references|bibliography|index|glossary)$", re.IGNORECASE)
+            for idx_l in range(last_start + 5, n):
+                if back_re.match(lines[idx_l].replace("\f", "").strip()):
+                    fallback_end = idx_l
+                    break
+            b_end = max(b_end, fallback_end)
 
     return {
         "title": meta_1a.get("title") or "",
@@ -651,6 +661,7 @@ def validate_cleaned_chunk(
     chunk_text: str,
     running_headers: list[str],
     finish_reason: str | None,
+    check_ocr_splits: bool = True,
 ) -> list[str]:
     """Return concrete quality defects found in a cleaned chunk (empty list = passed)."""
     issues: list[str] = []
@@ -707,9 +718,10 @@ def validate_cleaned_chunk(
     if spaced_hits:
         issues.append(f"letter-spaced text not collapsed: {spaced_hits[:2]}")
 
-    ocr_splits = find_ocr_word_splits(cleaned)
-    if ocr_splits:
-        issues.append(f"possible mid-word OCR split(s) — rejoin broken words: {ocr_splits[:5]}")
+    if check_ocr_splits:
+        ocr_splits = find_ocr_word_splits(cleaned)
+        if ocr_splits:
+            issues.append(f"possible mid-word OCR split(s) — rejoin broken words: {ocr_splits[:5]}")
 
     return issues
 
@@ -738,6 +750,7 @@ def clean_chunk_with_guardrails(
     fallback_api_url: str | None = None,
     fallback_model: str | None = None,
     api_key: str | None = None,
+    check_ocr_splits: bool = True,
 ) -> tuple[str, dict]:
     in_words = len(chunk_text.replace("<PAGEBREAK>", "").split())
     max_tok = max(1024, min(6144, int(in_words * 2.1) + 256))
@@ -797,7 +810,7 @@ def clean_chunk_with_guardrails(
         ratio = out_words / max(1, in_words)
         finish = meta.get("finish_reason")
         timings = meta.get("timings") or {}
-        issues = validate_cleaned_chunk(cleaned, chunk_text, running_headers, finish)
+        issues = validate_cleaned_chunk(cleaned, chunk_text, running_headers, finish, check_ocr_splits=check_ocr_splits)
 
         last_out = cleaned
         last_info = {
@@ -936,9 +949,18 @@ def main(argv: list[str] | None = None, prog: str | None = None, default_tts: st
         struct = json.loads(struct_file.read_text(encoding="utf-8"))
         print(f"Loaded cached structure: {struct['title']} by {struct['author']} ({len(struct['sections'])} sections)", flush=True)
     else:
-        print(f"Stage 1: Analyzing book structure, front/back matter, and chapters via {args.model}...", flush=True)
+        # Stage 1 runs only once per book (2 small calls): prefer the stronger fallback model when alive
+        use_fb_s1 = (
+            not args.no_fallback
+            and args.fallback_api_url
+            and args.fallback_model
+            and _endpoint_alive(args.fallback_api_url)
+        )
+        s1_url = args.fallback_api_url if use_fb_s1 else args.api_url
+        s1_model = args.fallback_model if use_fb_s1 else args.model
+        print(f"Stage 1: Analyzing book structure, front/back matter, and chapters via {s1_model}...", flush=True)
         t_s1 = time.perf_counter()
-        struct = detect_structure(lines, args.api_url, args.model, keep_appendices=args.keep_appendices, api_key=args.api_key)
+        struct = detect_structure(lines, s1_url, s1_model, keep_appendices=args.keep_appendices, api_key=args.api_key)
         if not struct.get("title") and source_meta.get("title"):
             struct["title"] = source_meta["title"]
         if not struct.get("author") and source_meta.get("author"):
@@ -958,6 +980,7 @@ def main(argv: list[str] | None = None, prog: str | None = None, default_tts: st
     b_end = struct["body_end_line"]
     all_sections = struct["sections"]
     is_pdf = args.input.suffix.lower() == ".pdf"
+    is_epub = args.input.suffix.lower() == ".epub"
     for idx, sec in enumerate(sections):
         start_l = sec["start_line"]
         end_l = (all_sections[idx + 1]["start_line"] - 1) if (idx + 1 < len(all_sections)) else b_end
@@ -1023,6 +1046,7 @@ def main(argv: list[str] | None = None, prog: str | None = None, default_tts: st
                 fallback_api_url=None if args.no_fallback else args.fallback_api_url,
                 fallback_model=None if args.no_fallback else args.fallback_model,
                 api_key=args.api_key,
+                check_ocr_splits=not is_epub,
             )
             c_file.write_text(json.dumps({"text": cleaned, "info": info}, ensure_ascii=False), encoding="utf-8")
 
