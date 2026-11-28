@@ -134,39 +134,68 @@ def _is_standalone_heading_or_attrib(para: str) -> bool:
     return False
 
 
-DEFAULT_PRONUNCIATIONS: dict[str, str] = {
-    "Los Angeles": "lˌɔs ˈænʤələs",
+DEFAULT_PRONUNCIATIONS: dict[str, dict[str, str]] = {
+    "Los Angeles": {"ipa": "lˌɔs ˈænʤələs"},
 }
 
 
-def load_pronunciations(custom_path: Path | None = None) -> dict[str, str]:
-    """Load built-in pronunciation fixes merged with ~/.config/mumblebee/pronunciations.json and --pronunciations."""
-    table = dict(DEFAULT_PRONUNCIATIONS)
+def _normalize_pron_entry(val) -> dict[str, str] | None:
+    if isinstance(val, str) and val.strip():
+        return {"ipa": val.strip().strip("/")}
+    if isinstance(val, dict):
+        if isinstance(val.get("ipa"), str) and val["ipa"].strip():
+            return {"ipa": val["ipa"].strip().strip("/")}
+        if isinstance(val.get("respell"), str) and val["respell"].strip():
+            return {"respell": val["respell"].strip()}
+    return None
+
+
+def load_pronunciations(
+    custom_path: Path | None = None,
+    book_input_path: Path | None = None,
+) -> dict[str, dict[str, str]]:
+    """Load built-in pronunciation fixes merged with user config, sibling <book>_pronunciations.json, and --pronunciations."""
+    table: dict[str, dict[str, str]] = {k: dict(v) for k, v in DEFAULT_PRONUNCIATIONS.items()}
     candidates: list[Path] = []
     xdg_cfg = os.environ.get("XDG_CONFIG_HOME")
     default_cfg = (Path(xdg_cfg).expanduser() if xdg_cfg else Path.home() / ".config") / "mumblebee" / "pronunciations.json"
     if default_cfg.is_file():
         candidates.append(default_cfg)
+    if book_input_path is not None:
+        stem_base = re.sub(r"_tts_ready$", "", book_input_path.stem)
+        sibling = book_input_path.with_name(f"{stem_base}_pronunciations.json")
+        if sibling.is_file() and sibling != custom_path:
+            candidates.append(sibling)
     if custom_path is not None:
         candidates.append(custom_path)
     for path in candidates:
         data = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             for k, v in data.items():
-                if isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip():
-                    table[k.strip()] = v.strip().strip("/")
+                if not isinstance(k, str) or not k.strip():
+                    continue
+                entry = _normalize_pron_entry(v)
+                if entry is not None:
+                    table[k.strip()] = entry
     return table
 
 
-def apply_pronunciations(text: str, pronunciations: dict[str, str] | None) -> str:
-    """Apply misaki inline IPA overrides ([Word](/ipa/)) for known tricky phrases like 'Los Angeles'."""
+def apply_pronunciations(text: str, pronunciations: dict[str, str | dict[str, str]] | None) -> str:
+    """Apply misaki inline IPA overrides ([Word](/ipa/)) and plain-text respellings (e.g. CamelCase)."""
     if not pronunciations or not text:
         return text
     # Longest phrases first so multi-word names match before single words
     for phrase in sorted(pronunciations, key=len, reverse=True):
-        ipa = pronunciations[phrase].strip("/")
+        entry = _normalize_pron_entry(pronunciations[phrase])
+        if entry is None:
+            continue
         pattern = re.compile(rf"(?<!\[)\b{re.escape(phrase)}\b(?!\]\(/)" , re.IGNORECASE)
-        text = pattern.sub(lambda m, _ipa=ipa: f"[{m.group(0)}](/{_ipa}/)", text)
+        if "ipa" in entry:
+            ipa = entry["ipa"]
+            text = pattern.sub(lambda m, _ipa=ipa: f"[{m.group(0)}](/{_ipa}/)", text)
+        elif "respell" in entry:
+            respell = entry["respell"]
+            text = pattern.sub(lambda _m, _r=respell: _r, text)
     return text
 
 
@@ -651,7 +680,7 @@ def convert_book(input_path: Path, args, multiple_inputs: bool, engine: FastKoko
             except Exception as exc:
                 print(f"Cover lookup skipped ({exc})", flush=True)
 
-    pronunciations = load_pronunciations(args.pronunciations)
+    pronunciations = load_pronunciations(args.pronunciations, book_input_path=input_path)
     t_book0 = time.perf_counter()
     total_audio_s = 0.0
 

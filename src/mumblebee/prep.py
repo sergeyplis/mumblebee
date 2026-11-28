@@ -907,6 +907,13 @@ def main(argv: list[str] | None = None, prog: str | None = None, default_tts: st
     parser.add_argument("--max-chapters", type=int, default=0, help="Optional: only process first N chapters (for fast testing)")
     parser.add_argument("--resume", action="store_true", help="Resume from cached structure and cleaned chunks")
     parser.add_argument("--no-cache", action="store_true", help="Ignore existing cache and re-run from scratch")
+    parser.add_argument("--no-pronunciation-audit", action="store_true", help="Skip Stage 3 Kokoro pronunciation audit")
+    parser.add_argument(
+        "--pronunciation-timeout",
+        type=float,
+        default=120.0,
+        help="Wall-clock timeout in seconds for Stage 3 pronunciation audit (default: 120; 0 disables)",
+    )
     parser.add_argument("--stop-server", action="store_true", help="Stop helper server (if configured via MUMBLEBEE_FAST_SERVER_CMD or book-prep-server) when done")
     parser.add_argument(
         "--tts",
@@ -1126,7 +1133,59 @@ def main(argv: list[str] | None = None, prog: str | None = None, default_tts: st
         out_parts.append("")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text("\n".join(out_parts).strip() + "\n", encoding="utf-8")
+    cleaned_book_text = "\n".join(out_parts).strip() + "\n"
+    out_path.write_text(cleaned_book_text, encoding="utf-8")
+
+    # Stage 3: Automatic Kokoro pronunciation audit (default on; opt-out or wall-clock timeout safe)
+    pron_path = out_path.with_name(f"{args.input.stem}_pronunciations.json")
+    if not args.no_pronunciation_audit and args.pronunciation_timeout > 0:
+        if args.resume and not args.no_cache and pron_path.is_file():
+            existing_pron = json.loads(pron_path.read_text(encoding="utf-8"))
+            print(f"Loaded cached pronunciation overrides: {pron_path} ({len(existing_pron)} entries)", flush=True)
+            report_lines.append(f"Pronunciation overrides : {len(existing_pron)} (cached: {pron_path.name})")
+        else:
+            from .pronunciation import run_pronunciation_audit
+
+            use_fb_s3 = (
+                not args.no_fallback
+                and args.fallback_api_url
+                and args.fallback_model
+                and _endpoint_alive(args.fallback_api_url)
+            )
+            s3_url = args.fallback_api_url if use_fb_s3 else args.api_url
+            s3_model = args.fallback_model if use_fb_s3 else args.model
+            print(
+                f"Stage 3: Auditing Kokoro pronunciations via {s3_model} "
+                f"(timeout={args.pronunciation_timeout:g}s)...",
+                flush=True,
+            )
+            overrides, p_stats = run_pronunciation_audit(
+                cleaned_book_text,
+                book_title=struct.get("title") or args.input.stem,
+                api_url=s3_url,
+                model=s3_model,
+                api_key=args.api_key,
+                timeout_s=args.pronunciation_timeout,
+            )
+            if p_stats.get("skipped_reason"):
+                print(f"Pronunciation audit skipped ({p_stats['skipped_reason']})", flush=True)
+                report_lines.append(f"Pronunciation audit     : skipped ({p_stats['skipped_reason']})")
+            else:
+                pron_path.write_text(json.dumps(overrides, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                t_note = " [TIMED OUT — partial results kept]" if p_stats.get("timed_out") else ""
+                print(
+                    f"Pronunciation audit done in {p_stats['elapsed_s']:.1f}s: "
+                    f"{p_stats['fixes']} override(s) from {p_stats['candidates']} candidates -> {pron_path}{t_note}",
+                    flush=True,
+                )
+                report_lines.append(
+                    f"Pronunciation overrides : {p_stats['fixes']} / {p_stats['candidates']} candidates "
+                    f"in {p_stats['elapsed_s']:.1f}s ({pron_path.name}){t_note}"
+                )
+                for term, entry in overrides.items():
+                    val = entry.get("ipa") or entry.get("respell") or ""
+                    kind = "ipa" if "ipa" in entry else "respell"
+                    report_lines.append(f"  [PRON:{kind}] {term} -> {val} ({entry.get('reason', '')})")
 
     dt_s2 = time.perf_counter() - t_s2
     report_lines += [
@@ -1155,6 +1214,8 @@ def main(argv: list[str] | None = None, prog: str | None = None, default_tts: st
             "--backend", "auto",
             "--output-dir", str(args.tts_output_dir),
         ]
+        if pron_path.is_file():
+            cmd += ["--pronunciations", str(pron_path)]
         if args.voice:
             cmd += ["--voice", args.voice]
         if args.speed is not None:

@@ -122,10 +122,13 @@ mumblebee prep MyBook.pdf --resume
 # Keep narrative Appendices too:
 mumblebee prep MyBook.pdf --keep-appendices --resume
 
-# Fast sanity test on the first 3 sections only:
-mumblebee prep MyBook.pdf --max-chapters 3 --resume
+# Fast sanity test on the first 3 sections only (skip or bound pronunciation audit):
+mumblebee prep MyBook.pdf --max-chapters 3 --pronunciation-timeout 60 --resume
+
+# Skip Stage 3 Kokoro pronunciation audit completely:
+mumblebee prep MyBook.pdf --no-pronunciation-audit --resume
 ```
-Review `MyBook_prep_report.txt` (shows any escalated or flagged chunks) and skim `MyBook_tts_ready.txt` before rendering audio.
+Review `MyBook_prep_report.txt` (shows any escalated chunks and pronunciation fixes), `MyBook_pronunciations.json` (auto-loaded by `mumblebee kokoro`), and `MyBook_tts_ready.txt` before rendering audio.
 
 #### Step B1 — Render Per-Chapter Opus with Kokoro (`mumblebee kokoro`)
 ```bash
